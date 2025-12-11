@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Geist, Geist_Mono } from "next/font/google"; // lub @next/font/local, jeśli wolisz lokalne
+import ToastProvider from "@/components/ToastProvider";
 
-const sans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
-const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
-
-export const metadata: Metadata = { title: "Awaken", description: "IDML Translator" };
+export const metadata: Metadata = {
+  title: "IDML Translator",
+  description: "Upload and translate your IDML files with ease.",
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="pl" className={`${sans.variable} ${mono.variable}`}>
-      <body className="min-h-screen bg-background text-foreground font-sans antialiased">
+    <html lang="pl" className="h-full">
+      <body className="min-h-screen bg-background text-foreground font-sans antialiased thin-scrollbar">
         {children}
+        <ToastProvider />
       </body>
     </html>
   );
