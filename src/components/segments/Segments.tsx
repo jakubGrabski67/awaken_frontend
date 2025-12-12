@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import type { Segment } from "@/types/segment";
 import SegmentCard from "./SegmentCard";
 import { api } from "@/lib/api";
@@ -16,24 +16,20 @@ type Props = {
   onUploaded?: (payload: { fileId: string; name: string; segments: Segment[] }) => void;
   loading?: boolean;
   skeletonCount?: number;
-  sidebarCollapsed?: boolean;
   fileName?: string | null;
 };
 
 export default function Segments({
   segments: initial,
   setSegments: lift,
+  fileId,
   onUploaded,
   loading = false,
   skeletonCount = 12,
-  sidebarCollapsed = false,
 }: Props) {
-
   const [segments, setLocalSegments] = useState<Segment[]>(initial ?? []);
   const [busy, setBusy] = useState(false);
   const [isPending, startTransition] = useTransition();
-
-  const LEFT_GAP = sidebarCollapsed ? "ml-[320px]" : "";
 
   useEffect(() => setLocalSegments(initial ?? []), [initial]);
 
@@ -45,7 +41,7 @@ export default function Segments({
     [lift]
   );
 
-  /** Standardowy tryb tłumaczenia "Lorem ipsum" */
+  /** Standard: /translate (mode domyślny = "lipsum") */
   const translateOne = useCallback(
     async (idx: number) => {
       const s = segments[idx];
@@ -66,7 +62,7 @@ export default function Segments({
     [segments, setSegments]
   );
 
-  /** Tryb tłumaczenia "reverse" */
+  /** Reverse: /translate z mode: "reverse" */
   const translateOneReverse = useCallback(
     async (idx: number) => {
       const s = segments[idx];
@@ -87,7 +83,7 @@ export default function Segments({
     [segments, setSegments]
   );
 
-  /* Upload: obsługa .idml lub .zip (z wieloma IDML) */
+  /** Upload z dropzone */
   const onFilesSelected = useCallback(
     async (files?: FileList | null) => {
       if (!files?.length) return;
@@ -95,37 +91,40 @@ export default function Segments({
       const isIdml = /\.idml$/i.test(file.name);
       const isZip = /\.zip$/i.test(file.name);
       if (!isIdml && !isZip) {
-        toastErr("Obsługiwane są pliki .idml oraz .zip z plikami .idml.");
+        toastErr("Wgraj plik .idml lub .zip z plikami .idml.");
         return;
       }
 
-      const form = new FormData();
-      form.append("file", file);
       setBusy(true);
       try {
-        const res = await api.post("/files/upload", form);
+        const form = new FormData();
+        form.append("file", file);
 
-        // Wariant MULTI
-        if (Array.isArray(res.data?.files)) {
-          const items = res.data.files as Array<{ fileId: string; name: string; segments: Segment[] }>;
-          if (items.length === 0) {
+        const up = await api.post("/files/upload", form);
+
+        // ZIP z wieloma IDML - backend zwraca tablicę files
+        if (Array.isArray(up.data?.files)) {
+          const items = up.data.files as Array<{ fileId: string; name: string; segments: Segment[] }>;
+          if (!items.length) {
             toastErr("ZIP nie zawiera żadnych plików IDML.");
           } else {
-            items.forEach((doc) => onUploaded?.({ fileId: doc.fileId, name: doc.name, segments: doc.segments }));
-            toastOk(`Przesłano dokumentów: ${items.length}.`);
+            // Wywołujemy onUploaded per dokument — Page doda je do listy i wybierze pierwszy
+            items.forEach((doc) => {
+              onUploaded?.({ fileId: doc.fileId, name: doc.name, segments: doc.segments });
+            });
+            toastOk(`Przesłano: ${items.length} dokumentów IDML.`);
           }
-          return;
+        } else {
+          // Pojedynczy IDML albo ZIP z jednym IDML
+          const { fileId, segments, originalName } = up.data as {
+            fileId: string;
+            segments: Segment[];
+            originalName?: string;
+          };
+          const displayName = originalName || file.name;
+          onUploaded?.({ fileId, name: displayName, segments });
+          toastOk(`Przesłano: ${displayName}`);
         }
-
-        // Wariant SINGLE
-        const { fileId: fid, segments: segs, originalName } = res.data as {
-          fileId: string;
-          segments: Segment[];
-          originalName?: string;
-        };
-        const displayName = originalName || file.name;
-        onUploaded?.({ fileId: fid, name: displayName, segments: segs });
-        toastOk(`Przesłano: ${displayName}`);
       } catch (err: any) {
         const msg = err?.response?.data?.error ?? err?.message ?? "Unexpected error";
         toastErr(msg);
@@ -136,6 +135,7 @@ export default function Segments({
     [onUploaded]
   );
 
+  /** ---- Skeleton card ---- */
   const SkeletonCard = () => (
     <div
       className={clsx(
@@ -165,7 +165,6 @@ export default function Segments({
 
       {/* Content */}
       <div className="p-4 sm:p-5 pt-0 sm:pt-0">
-
         {/* ORYGINAŁ */}
         <section className="space-y-2">
           <div className="h-3 w-16 rounded bg-white/10" />
@@ -190,18 +189,11 @@ export default function Segments({
     </div>
   );
 
-  /* SKELETONY gdy loading=true */
+  /** ---- 1) SKELETONY gdy loading=true ---- */
   if (loading) {
     const count = Math.max(1, skeletonCount ?? 12);
     return (
-      <div
-        className={clsx(
-          "grid grid-cols-1 gap-4",
-          "xl:grid-cols-2 xl:gap-5",
-          LEFT_GAP
-        )}
-        aria-label="Segments skeleton list"
-      >
+      <div className={clsx("grid grid-cols-1 gap-4", "xl:grid-cols-2 xl:gap-5")} aria-label="Segments skeleton list">
         {Array.from({ length: count }).map((_, i) => (
           <SkeletonCard key={`sk-${i}`} />
         ))}
@@ -209,20 +201,31 @@ export default function Segments({
     );
   }
 
-  /* PUSTY STAN -> (drag&drop) */
+  /** ---- 2) PUSTY STAN / PRZEŁĄCZANIE PLIKÓW ----*/
   if (!segments?.length) {
-    return <EmptyDropzone onFilesSelected={onFilesSelected} leftGapClass={LEFT_GAP} />;
+    // Jeżeli jest aktywny plik – pokaż skeleton (przełączanie)
+    if (fileId) {
+      const count = Math.max(1, skeletonCount ?? 12);
+      return (
+        <div
+          className={clsx("grid grid-cols-1 gap-4", "xl:grid-cols-2 xl:gap-5")}
+          aria-label="Segments skeleton list (switching)"
+        >
+          {Array.from({ length: count }).map((_, i) => (
+            <SkeletonCard key={`sk-switch-${i}`} />
+          ))}
+        </div>
+      );
+    }
+    // Brak pliku → dropzone z obsługą .idml i .zip (multi)
+    return <EmptyDropzone onFilesSelected={onFilesSelected} />;
   }
 
-  /* NORMALNY RENDER */
+  /** ---- 3) NORMALNY RENDER ---- */
   return (
-    <div className={clsx("space-y-4", LEFT_GAP)}>
+    <div className="space-y-4">
       <div
-        className={clsx(
-          "grid grid-cols-1 gap-4",
-          "xl:grid-cols-2 xl:gap-5",
-          "aria-busy:opacity-90"
-        )}
+        className={clsx("grid grid-cols-1 gap-4", "xl:grid-cols-2 xl:gap-5", "aria-busy:opacity-90")}
         aria-label="Segments list"
         aria-busy={busy || isPending}
       >
@@ -243,12 +246,9 @@ export default function Segments({
 /** Pusty stan z drag&drop */
 function EmptyDropzone({
   onFilesSelected,
-  leftGapClass = "",
 }: {
   onFilesSelected?: (files?: FileList | null) => void;
-  leftGapClass?: string;
 }) {
-
   const [dragOver, setDragOver] = useState(false);
   const depth = useRef(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -259,30 +259,33 @@ function EmptyDropzone({
   };
 
   const onDragEnter: React.DragEventHandler<HTMLLabelElement> = (e) => {
-    e.preventDefault(); e.stopPropagation();
-    depth.current += 1; if (!dragOver) setDragOver(true);
+    e.preventDefault();
+    e.stopPropagation();
+    depth.current += 1;
+    if (!dragOver) setDragOver(true);
   };
-
   const onDragOver: React.DragEventHandler<HTMLLabelElement> = (e) => {
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
   };
-
   const onDragLeave: React.DragEventHandler<HTMLLabelElement> = (e) => {
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
+    e.stopPropagation();
     depth.current = Math.max(0, depth.current - 1);
     if (depth.current === 0) setDragOver(false);
   };
-
   const onDrop: React.DragEventHandler<HTMLLabelElement> = (e) => {
-    e.preventDefault(); e.stopPropagation();
-    depth.current = 0; setDragOver(false);
+    e.preventDefault();
+    e.stopPropagation();
+    depth.current = 0;
+    setDragOver(false);
     const dt = e.dataTransfer;
     const files = dt?.files && dt.files.length > 0 ? dt.files : null;
     onFilesSelected?.(files);
   };
 
   return (
-    <div className={clsx("flex min-h-[70vh] items-center justify-center", leftGapClass)}>
+    <div className="flex min-h-[70vh] items-center justify-center">
       <div className="w-full max-w-2xl">
         <label
           htmlFor="file-input"
@@ -307,18 +310,13 @@ function EmptyDropzone({
           />
           <div className="mx-auto flex max-w-md flex-col items-center gap-4">
             <div
-              className={clsx(
-                "flex h-14 w-14 items-center justify-center rounded-full transition",
-                dragOver ? "bg-primary/15" : "bg-muted"
-              )}
+              className={clsx("flex h-14 w-14 items-center justify-center rounded-full transition", dragOver ? "bg-primary/15" : "bg-muted")}
             >
               <UploadCloud className={clsx("h-6 w-6", dragOver ? "text-primary" : "text-muted-foreground")} />
             </div>
             <div className="space-y-1">
               <p className="text-base font-medium">Wybierz plik do przesłania lub przeciągnij go tutaj</p>
-              <p className="text-sm text-muted-foreground">
-                Obsługiwane: <strong>.idml</strong> oraz <strong>.zip</strong> z wieloma plikami IDML (max 1 plik).
-              </p>
+              <p className="text-sm text-muted-foreground">Obsługiwane: IDML oraz ZIP z wieloma IDML.</p>
             </div>
             <div className="pt-2">
               <Button type="button" className="rounded-xl" onClick={() => inputRef.current?.click()}>

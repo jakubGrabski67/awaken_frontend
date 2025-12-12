@@ -76,10 +76,12 @@ export default function Page() {
   );
 
   const stats = useMemo(() => {
-    const total = segments.length;
-    const translated = segments.filter((s) => !!s?.translatedText?.trim()).length;
+    const list = Array.isArray(segments) ? segments : [];
+    const total = list.length;
+    const translated = list.filter((s) => !!s?.translatedText?.trim()).length;
     return { total, translated, untranslated: total - translated };
   }, [segments]);
+
 
   const can = useMemo(
     () => ({
@@ -91,15 +93,17 @@ export default function Page() {
   );
 
   const visibleSegments = useMemo(() => {
+    const list = Array.isArray(segments) ? segments : [];
     switch (filter) {
       case "translated":
-        return segments.filter((s) => !!s.translatedText?.trim());
+        return list.filter((s) => !!s.translatedText?.trim());
       case "untranslated":
-        return segments.filter((s) => !s.translatedText?.trim() && !!s.originalText?.trim());
+        return list.filter((s) => !s.translatedText?.trim() && !!s.originalText?.trim());
       default:
-        return segments;
+        return list;
     }
   }, [segments, filter]);
+
 
   // korekta filtra, gdy dane się zmieniają
   useEffect(() => {
@@ -161,10 +165,13 @@ export default function Page() {
 
   // setter do przekazania do <Segments/> gdy podajemy "widoczne" segmenty:
   const setFromVisible = (nextVisible: Segment[]) => {
-    const byKey = new Map(nextVisible.map((s) => [`${s.storyPath}|${s.index}`, s] as const));
-    const merged = segments.map((s) => byKey.get(`${s.storyPath}|${s.index}`) ?? s);
+    const vis = Array.isArray(nextVisible) ? nextVisible : [];
+    const byKey = new Map(vis.map((s) => [`${s.storyPath}|${s.index}`, s] as const));
+    const base = Array.isArray(segments) ? segments : [];
+    const merged = base.map((s) => byKey.get(`${s.storyPath}|${s.index}`) ?? s);
     setAllSegments(merged);
   };
+
 
   function handleUploaded(id: string, name: string) {
     pendingUploadIdRef.current = id;
@@ -178,16 +185,17 @@ export default function Page() {
   }
 
   function handleSegments(arr: Segment[]) {
+    const safe = Array.isArray(arr) ? arr : [];
     const id = pendingUploadIdRef.current ?? fileId;
     if (id) {
-      setFileSegments((prev) => ({ ...prev, [id]: arr }));
+      setFileSegments((prev) => ({ ...prev, [id]: safe }));
       if (fileId === id || pendingUploadIdRef.current === id) {
-        _setSegments(arr);
+        _setSegments(safe);
       }
     }
     pendingUploadIdRef.current = null;
     setLoadingSegments(false);
-    setSkeletonCount(arr?.length || 12);
+    setSkeletonCount(safe.length || 12);
   }
 
   function handleSelectFile(id: string) {
